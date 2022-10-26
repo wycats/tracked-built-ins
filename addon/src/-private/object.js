@@ -4,6 +4,8 @@ import {
   setValue,
 } from 'ember-tracked-storage-polyfill';
 
+import { consumeTag, tagFor, dirtyTagFor } from '@glimmer/validator';
+
 export default class TrackedObject {
   static fromEntries(entries) {
     return new TrackedObject(Object.fromEntries(entries));
@@ -24,28 +26,31 @@ export default class TrackedObject {
 
     return new Proxy(clone, {
       get(target, prop) {
-        self.#readStorageFor(prop);
+        self.#values.consume(prop);
 
         return target[prop];
       },
 
       has(target, prop) {
-        self.#readStorageFor(prop);
+        self.#values.consume(prop);
 
         return prop in target;
       },
 
       ownKeys(target) {
-        getValue(self.#collection);
+        getValue(self.#iteration);
 
         return Reflect.ownKeys(target);
       },
 
       set(target, prop, value) {
+        if (!(prop in target)) {
+          self.#dirtyKeys();
+        }
+
         target[prop] = value;
 
-        self.#dirtyStorageFor(prop);
-        self.#dirtyCollection();
+        self.#values.update(prop);
 
         return true;
       },
@@ -53,8 +58,8 @@ export default class TrackedObject {
       deleteProperty(target, prop) {
         if (prop in target) {
           delete target[prop];
-          self.#dirtyStorageFor(prop);
-          self.#dirtyCollection();
+          self.#values.update(prop);
+          self.#dirtyKeys();
         }
 
         return true;
@@ -66,30 +71,34 @@ export default class TrackedObject {
     });
   }
 
-  #storages = new Map();
-
-  #collection = createStorage(null, () => false);
+  #iteration = createStorage(null, () => false);
+  #values = new PropertyStorageMap(this);
 
   #readStorageFor(key) {
-    let storage = this.#storages.get(key);
-
-    if (storage === undefined) {
-      storage = createStorage(null, () => false);
-      this.#storages.set(key, storage);
-    }
-
-    getValue(storage);
+    consumeTag(tagFor(this, key));
   }
 
   #dirtyStorageFor(key) {
-    const storage = this.#storages.get(key);
-
-    if (storage) {
-      setValue(storage, null);
-    }
+    dirtyTagFor(this, key);
   }
 
-  #dirtyCollection() {
-    setValue(this.#collection, null);
+  #dirtyKeys() {
+    setValue(this.#iteration, null);
+  }
+}
+
+export class PropertyStorageMap {
+  #object;
+
+  constructor(object) {
+    this.#object = object;
+  }
+
+  consume(key) {
+    consumeTag(tagFor(this.#object, key));
+  }
+
+  update(key) {
+    dirtyTagFor(this.#object, key);
   }
 }
